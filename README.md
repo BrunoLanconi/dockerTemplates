@@ -1,7 +1,7 @@
 # Docker template
 A Docker template grouping various types of containers.<br>
 
-![Solution structure](https://github.com/BrunoLanconi/desafioBold/blob/main/imgs/solution_structure.png)
+![Solution structure](https://github.com/BrunoLanconi/dockerTemplates/blob/main/imgs/solution_structure.png)
 
 # Dependencies
 Docker.
