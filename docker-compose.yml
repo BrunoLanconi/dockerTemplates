@@ -1,0 +1,298 @@
+# This is a template docker-compose file capable of provision the container schema present on imgs/solution_structure.png
+version: "3"
+services:  # Lists all setup
+    template_api_database:  # Service name
+        build:  # Defines build configuration
+            dockerfile: ./docker/database.dockerfile  # Dockerfile location
+            context: .  # This docker-compose file context
+        image: template/api_database  # Image name
+        container_name: template_api_database  # Container name
+        volumes:  # Defines volume configuration, used to preserve container content on host
+            - "./database/api_data:/var/lib/mysql"  # {host_path}:{container_path}
+        ports:  # Ports to expose, may be used to link a host port to container port with {host_port}:{container_port}
+            - "3306"
+        environment:  # Defines environment variable
+            MYSQL_ROOT_PASSWORD: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_DATABASE: mysql
+        networks:  # Defines intranet (container context) networks
+            - template_network
+        restart: always  # Defines restart policy
+
+    template_api1:
+        build:
+            dockerfile: docker/api.dockerfile
+            context: .
+        image: template/api
+        container_name: template_api1
+        volumes:
+            - "./api/api:/app/api"
+            - "./docker/config/api_apache.conf:/etc/apache2/conf-enabled/api_apache.conf"
+        command: bash -c "python wait_for_database.py && python manage.py collectstatic --noinput && python manage.py makemigrations && python manage.py migrate && python manage.py createsuperuser --noinput || true && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            API_PORT: 3030  # API_PORT is used to set CSRF_TRUSTED_ORIGINS, must be the used by api_load_balancer
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_api_database
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            ADMIN: ${ADMIN:-True}  # ADMIN is used to enable Django admin console. If unset, uses "True".
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on: # Defines what containers must be up in order to perform this service build
+            - template_api_database
+
+    template_api2:
+        build:
+            dockerfile: docker/api.dockerfile
+            context: .
+        image: template/api
+        container_name: template_api2
+        volumes:
+            - "./api/api:/app/api"
+            - "./docker/config/api_apache.conf:/etc/apache2/conf-enabled/api_apache.conf"
+        command: bash -c "python wait_for_django_parent.py && python manage.py collectstatic --noinput && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            API_PORT: 3030  # API_PORT is used to set CSRF_TRUSTED_ORIGINS, must be the used by api_load_balancer
+            DJANGO_PARENT: template_api1  # This instance will wait for DJANGO_PARENT pinging before runserver through wait_for_django_parent.py
+            DJANGO_PARENT_PORT: 3000  # DJANGO_PARENT_PORT is the DJANGO_PARENT port
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_api_database
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            ADMIN: ${ADMIN:-True}  # ADMIN is used to enable Django admin console. If unset, uses "True".
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_database
+
+    template_api3:
+        build:
+            dockerfile: docker/api.dockerfile
+            context: .
+        image: template/api
+        container_name: template_api3
+        volumes:
+            - "./api/api:/app/api"
+            - "./docker/config/api_apache.conf:/etc/apache2/conf-enabled/api_apache.conf"
+        command: bash -c "python wait_for_django_parent.py && python manage.py collectstatic --noinput && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            API_PORT: 3030  # API_PORT is used to set CSRF_TRUSTED_ORIGINS, must be the same used by api_load_balancer host side
+            DJANGO_PARENT: template_api1  # This instance will wait for DJANGO_PARENT pinging before runserver through wait_for_django_parent.py
+            DJANGO_PARENT_PORT: 3000  # DJANGO_PARENT_PORT is the DJANGO_PARENT port
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_api_database
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_database
+
+    template_api_load_balancer:
+        build:
+            dockerfile: ./docker/load_balancer.dockerfile
+            context: .
+        image: template/api_load_balancer
+        container_name: template_api_load_balancer
+        volumes:
+            - "./docker/config/api_nginx.conf:/etc/nginx/nginx.conf"
+        ports:
+            - "3030:80"  # todo REMOVE 3030: on production, its used to access API admin directly
+            - "443"
+        networks:
+            - template_network
+        depends_on:
+            - template_api1
+            - template_api2
+            - template_api3
+
+    template_services:
+        build:
+            dockerfile: ./docker/services.dockerfile
+            context: .
+        image: template/services
+        container_name: template_services
+        volumes:
+            - "./services:/var/log"
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_load_balancer
+
+    template_main_site_database:
+        build:
+            dockerfile: ./docker/database.dockerfile
+            context: .
+        image: template/main_site_database
+        container_name: template_main_site_database
+        volumes:
+            - "./database/main_site_data:/var/lib/mysql"
+        ports:
+            - "3306"
+        environment:
+            MYSQL_ROOT_PASSWORD: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_DATABASE: mysql
+        networks:
+            - template_network
+        restart: always
+
+    template_main_site1:
+        build:
+            dockerfile: ./docker/main_site.dockerfile
+            context: .
+        image: template/main_site
+        container_name: template_main_site1
+        volumes:
+            - "./main_site/pages/tests.py:/app/pages/tests.py"
+            - "./main_site/templates:/app/templates"
+            - "./docker/config/main_site_apache.conf:/etc/apache2/conf-enabled/main_site_apache.conf"
+        command: bash -c "python wait_for_database.py && python wait_for_django_parent.py && python reproduce_admin_on_api.py && python manage.py collectstatic --noinput && python manage.py makemigrations && python manage.py migrate && python manage.py createsuperuser --noinput || true && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            DJANGO_PARENT: template_api_load_balancer  # This instance will wait for DJANGO_PARENT pinging before runserver through wait_for_django_parent.py
+            DJANGO_PARENT_PORT: 80  # DJANGO_PARENT_PORT is the DJANGO_PARENT port
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_main_site_database  # note that the database for template_main_site* is dedicated to the Django instance
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            ADMIN: ${ADMIN:-True}  # ADMIN is used to enable Django admin console. If unset, uses "True".
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_load_balancer
+            - template_main_site_database
+
+    template_main_site2:
+        build:
+            dockerfile: ./docker/main_site.dockerfile
+            context: .
+        image: template/main_site
+        container_name: template_main_site2
+        volumes:
+            - "./main_site/pages/tests.py:/app/pages/tests.py"
+            - "./main_site/templates:/app/templates"
+            - "./docker/config/main_site_apache.conf:/etc/apache2/conf-enabled/main_site_apache.conf"
+        command: bash -c "python wait_for_django_parent.py && python manage.py collectstatic --noinput && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            DJANGO_PARENT: template_main_site1  # This instance will wait for DJANGO_PARENT pinging before runserver through wait_for_django_parent.py
+            DJANGO_PARENT_PORT: 3000  # DJANGO_PARENT_PORT is the DJANGO_PARENT port
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_main_site_database
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            ADMIN: ${ADMIN:-True}  # ADMIN is used to enable Django admin console. If unset, uses "True".
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_load_balancer
+            - template_main_site_database
+
+    template_main_site3:
+        build:
+            dockerfile: ./docker/main_site.dockerfile
+            context: .
+        image: template/main_site
+        container_name: template_main_site3
+        volumes:
+            - "./main_site/pages/tests.py:/app/pages/tests.py"
+            - "./main_site/templates:/app/templates"
+            - "./docker/config/main_site_apache.conf:/etc/apache2/conf-enabled/main_site_apache.conf"
+        command: bash -c "python wait_for_django_parent.py && python manage.py collectstatic --noinput && apache2ctl -D FOREGROUND"
+        ports:
+            - "3000"
+        environment:
+            DJANGO_PARENT: template_main_site1  # This instance will wait for DJANGO_PARENT pinging before runserver through wait_for_django_parent.py
+            DJANGO_PARENT_PORT: 3000  # DJANGO_PARENT_PORT is the DJANGO_PARENT port
+            DJANGO_SUPERUSER_USERNAME: admin
+            DJANGO_SUPERUSER_PASSWORD: admin
+            DJANGO_SUPERUSER_EMAIL: admin@admin.com
+            MYSQL_NAME: mysql
+            MYSQL_USER: mysql
+            MYSQL_PASSWORD: mysql
+            MYSQL_HOST: template_main_site_database
+            MYSQL_PORT: 3306
+            APP_DOMAIN: ${APP_DOMAIN:-localhost}  # APP_DOMAIN is the domain name used by server. Usually set on PROD via console. If unset, uses 'localhost'.
+            DEBUG: "False"  # DEBUG is used to set a test environment when running instance locally
+            ADMIN: ${ADMIN:-True}  # ADMIN is used to enable Django admin console. If unset, uses "True".
+            DATABASE_DEBUG: ${DATABASE_DEBUG:-False}  # DATABASE_DEBUG is used to enable Django default SQLite database. If unset, uses "False".
+        networks:
+            - template_network
+        restart: always
+        depends_on:
+            - template_api_load_balancer
+            - template_main_site_database
+
+    template_main_site_load_balancer:
+        build:
+            dockerfile: ./docker/load_balancer.dockerfile
+            context: .
+        image: template/main_site_load_balancer
+        container_name: template_main_site_load_balancer
+        volumes:
+            - "./docker/config/main_site_nginx.conf:/etc/nginx/nginx.conf"
+        ports:
+            - "80:80"
+            - "443:443"
+        networks:
+            - template_network
+        depends_on:
+            - template_main_site1
+            - template_main_site2
+            - template_main_site3
+
+networks:  # Lists all intranet (container context) networks
+    template_network:  # Intranet (container context) network name
+        driver: bridge  # Network driver type
